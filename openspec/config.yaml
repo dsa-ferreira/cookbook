@@ -30,3 +30,8 @@ schema: spec-driven
 #     archive:
 #       guidance:
 #         - Summarize the archive outcome before finishing
+
+operations:
+  apply:
+    guidance:
+      - Follow the module layout in AGENTS.md (constants, then public definitions, then private helpers) in every Python file you add or change
