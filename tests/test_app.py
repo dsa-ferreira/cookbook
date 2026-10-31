@@ -1,75 +1,49 @@
-from flask import Blueprint, Flask
-from flask.testing import FlaskClient
-from pydantic import BaseModel, Field
+from starlette.testclient import TestClient
 
-from cookbook.common.web.validation import validate_body
-from tests.conftest import AUTH
+from tests.conftest import initialize_params, rpc
 
 
-class Echo(BaseModel):
-    name: str = Field(min_length=1)
-    servings: int = Field(gt=0)
-
-
-def authed(app: Flask) -> FlaskClient:
-    client = app.test_client()
-    client.environ_base["HTTP_AUTHORIZATION"] = AUTH["Authorization"]
-    return client
-
-
-def add_echo_route(app: Flask) -> None:
-    bp = Blueprint("echo", __name__)
-
-    @bp.post("/echo")
-    @validate_body(Echo)
-    def echo(body: Echo):
-        return body.model_dump()
-
-    @bp.get("/boom")
-    def boom():
-        raise RuntimeError("secret internals")
-
-    app.register_blueprint(bp)
-
-
-def test_healthz(anon_client: FlaskClient) -> None:
-    resp = anon_client.get("/healthz")
+def test_healthz_needs_no_key(anon_http: TestClient) -> None:
+    resp = anon_http.get("/healthz")
     assert resp.status_code == 200
-    assert resp.get_json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok"}
 
 
-def test_valid_body_reaches_view(app: Flask) -> None:
-    add_echo_route(app)
-    resp = authed(app).post("/echo", json={"name": "x", "servings": 2})
+def test_initialize_without_key_is_401(anon_http: TestClient) -> None:
+    resp = rpc(anon_http, "initialize", initialize_params())
+    assert resp.status_code == 401
+    assert resp.headers["www-authenticate"] == "Bearer"
+    assert resp.json()["error"] == "unauthorized"
+
+
+def test_initialize_returns_instructions(http: TestClient) -> None:
+    resp = rpc(http, "initialize", initialize_params(), follow_redirects=False)
     assert resp.status_code == 200
-    assert resp.get_json() == {"name": "x", "servings": 2}
+    assert resp.headers["content-type"].startswith("application/json")
+    instructions = resp.json()["result"]["instructions"]
+    for phrase in ("search_ingredients", "list_units", "whole-recipe totals"):
+        assert phrase in instructions
 
 
-def test_bad_body_returns_422_shape(app: Flask) -> None:
-    add_echo_route(app)
-    resp = authed(app).post("/echo", json={"name": "x", "servings": 0})
-    assert resp.status_code == 422
-    body = resp.get_json()
-    assert body["error"] == "validation_error"
-    assert isinstance(body["message"], str)
-    assert [d["loc"] for d in body["details"]] == [["servings"]]
+def test_tools_list_and_call_need_no_session(http: TestClient) -> None:
+    listed = rpc(http, "tools/list")
+    assert listed.status_code == 200
+    assert "mcp-session-id" not in listed.headers
+    assert len(listed.json()["result"]["tools"]) == 7
+
+    called = rpc(http, "tools/call", {"name": "list_recipes", "arguments": {}})
+    assert called.status_code == 200
+    result = called.json()["result"]
+    assert result["isError"] is False
+    assert result["structuredContent"]["total"] == 0
 
 
-def test_non_json_body_returns_422(app: Flask) -> None:
-    add_echo_route(app)
-    resp = authed(app).post("/echo", data="nope", content_type="text/plain")
-    assert resp.status_code == 422
-    assert resp.get_json()["error"] == "validation_error"
+def test_post_mcp_does_not_redirect(http: TestClient) -> None:
+    resp = rpc(http, "tools/list", follow_redirects=False)
+    assert resp.status_code == 200
+    assert not resp.is_redirect
 
 
-def test_unknown_route_returns_404_shape(client: FlaskClient) -> None:
-    resp = client.get("/no/such/thing")
-    assert resp.status_code == 404
-    assert resp.get_json() == {"error": "not_found", "message": "no such resource"}
-
-
-def test_unhandled_error_returns_500_without_internals(app: Flask) -> None:
-    add_echo_route(app)
-    resp = authed(app).get("/boom")
-    assert resp.status_code == 500
-    assert resp.get_json() == {"error": "internal_error", "message": "internal server error"}
+def test_former_rest_paths_are_gone(http: TestClient) -> None:
+    for path in ("/recipes", "/recipes/1", "/ingredients", "/units"):
+        assert http.get(path).status_code == 404, path

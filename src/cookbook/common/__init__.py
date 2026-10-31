@@ -1,1 +1,1 @@
-"""Framework and infrastructure shared by every domain: config, database, auth, HTTP glue."""
+"""Infrastructure shared by every domain: config, database, auth, MCP glue."""

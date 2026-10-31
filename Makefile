@@ -27,7 +27,8 @@ test:
 
 # Needs COOKBOOK_DATABASE_URL and COOKBOOK_API_KEYS in the environment.
 run:
-	$(UV) run gunicorn --bind $(BIND) 'cookbook.app:create_app()'
+	$(UV) run uvicorn --factory cookbook.app:create_app \
+		--host $(word 1,$(subst :, ,$(BIND))) --port $(word 2,$(subst :, ,$(BIND))) --proxy-headers
 
 migrate:
 	$(UV) run cookbook migrate

@@ -34,8 +34,7 @@ COPY --chown=cookbook:cookbook migrations ./migrations
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1 \
-    GUNICORN_CMD_ARGS="--bind=0.0.0.0:8080 --workers=2 --no-control-socket"
+    PYTHONUNBUFFERED=1
 
 USER cookbook
 EXPOSE 8080
@@ -45,4 +44,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["gunicorn", "cookbook.app:create_app()"]
+# One process: the MCP endpoint is stateless and serves two clients.
+# --proxy-headers trusts X-Forwarded-* from the reverse proxy.
+CMD ["uvicorn", "--factory", "cookbook.app:create_app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]

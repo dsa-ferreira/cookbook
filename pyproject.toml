@@ -1,17 +1,17 @@
 [project]
 name = "cookbook"
 version = "0.1.0"
-description = "Recipe store with an HTTP API for an AI assistant"
+description = "Recipe store served as an MCP server for AI assistants"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "flask",
-    "gunicorn",
     "sqlalchemy>=2,<3",
     "alembic",
     "psycopg[binary]>=3,<4",
     "pydantic>=2,<3",
     "pydantic-settings",
+    "mcp>=2.3.0",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]

@@ -2,12 +2,13 @@ import hashlib
 import json
 
 import pytest
-from flask import Blueprint
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.testclient import TestClient
 
 from cookbook.app import create_app
 from cookbook.cli import main
 from cookbook.common.config import load_settings
+from tests.conftest import rpc
 
 
 def run_apikey(name: str, capsys: pytest.CaptureFixture[str]) -> tuple[str, str]:
@@ -39,10 +40,9 @@ def test_generated_key_authenticates(
         {"COOKBOOK_DATABASE_URL": database_url, "COOKBOOK_API_KEYS": json.dumps({"diogo": digest})}
     )
     app = create_app(settings, session_factory=session_factory)
-    bp = Blueprint("probe", __name__)
-    bp.add_url_rule("/probe", view_func=lambda: {"ok": True})
-    app.register_blueprint(bp)
 
-    client = app.test_client()
-    assert client.get("/probe", headers={"Authorization": f"Bearer {key}"}).status_code == 200
-    assert client.get("/probe", headers={"Authorization": "Bearer nope"}).status_code == 401
+    with TestClient(app) as client:
+        good = rpc(client, "tools/list", headers={"Authorization": f"Bearer {key}"})
+        assert good.status_code == 200
+        bad = rpc(client, "tools/list", headers={"Authorization": "Bearer nope"})
+        assert bad.status_code == 401

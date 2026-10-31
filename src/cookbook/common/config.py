@@ -88,17 +88,6 @@ class Settings(DatabaseSettings):
         return normalized
 
 
-def _describe(error: Mapping[str, object]) -> str:
-    """Turn one pydantic error into a message without its input value."""
-    loc = error.get("loc") or ()
-    field = str(loc[0]) if isinstance(loc, tuple) and loc else ""
-    var = f"{ENV_PREFIX}{field.upper()}" if field else "configuration"
-    if error.get("type") == "missing":
-        return f"{var} is required but not set"
-    msg = str(error.get("msg", "invalid value")).removeprefix("Value error, ")
-    return f"{var}: {msg}" if field else msg
-
-
 def load_settings[S: DatabaseSettings](
     env: Mapping[str, str] | None = None, model: type[S] = Settings
 ) -> S:
@@ -125,3 +114,14 @@ def load_settings[S: DatabaseSettings](
 def get_settings() -> Settings:
     """Process-wide settings, loaded on first use."""
     return load_settings()
+
+
+def _describe(error: Mapping[str, object]) -> str:
+    """Turn one pydantic error into a message without its input value."""
+    loc = error.get("loc") or ()
+    field = str(loc[0]) if isinstance(loc, tuple) and loc else ""
+    var = f"{ENV_PREFIX}{field.upper()}" if field else "configuration"
+    if error.get("type") == "missing":
+        return f"{var} is required but not set"
+    msg = str(error.get("msg", "invalid value")).removeprefix("Value error, ")
+    return f"{var}: {msg}" if field else msg

@@ -1,4 +1,4 @@
-"""Domain errors raised by services. The API maps them to JSON responses."""
+"""Domain errors raised by services. Tools report them as tool errors (``common.mcp.errors``)."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ from typing import Any
 
 
 class NotFoundError(Exception):
-    """The requested object does not exist (404)."""
+    """The requested object does not exist (``not_found``)."""
 
 
 class InvalidInputError(Exception):
-    """Input that passed schema validation but is still unacceptable (422).
+    """Input that passed schema validation but is still unacceptable (``validation_error``).
 
     ``details`` uses the same shape as pydantic error details, so clients
-    handle both kinds of 422 the same way.
+    handle both kinds of validation error the same way.
     """
 
     def __init__(self, message: str, details: list[dict[str, Any]] | None = None) -> None:

@@ -8,7 +8,7 @@ from cookbook.recipes.schemas import RecipeListParams
 
 def test_defaults() -> None:
     p = RecipeListParams()
-    assert (p.sort, p.limit, p.offset, p.ingredient_match, p.ingredient) == (
+    assert (p.sort, p.limit, p.offset, p.ingredient_match, p.ingredients) == (
         "name",
         50,
         0,
@@ -18,8 +18,8 @@ def test_defaults() -> None:
 
 
 def test_ingredients_are_normalized_and_deduplicated() -> None:
-    p = RecipeListParams(ingredient=[" Chickpeas", "chickpeas", "Spinach"])
-    assert p.ingredient == ["chickpeas", "spinach"]
+    p = RecipeListParams(ingredients=[" Chickpeas", "chickpeas", "Spinach"])
+    assert p.ingredients == ["chickpeas", "spinach"]
 
 
 @pytest.mark.parametrize("sort", ["name", "-name", "total_time", "-protein_per_serving"])
@@ -38,7 +38,7 @@ def test_valid_sort(sort: str) -> None:
         ("offset", -1),
         ("min_protein_per_serving", "lots"),
         ("max_total_time", "soon"),
-        ("ingredient", ["  "]),
+        ("ingredients", ["  "]),
     ],
 )
 def test_invalid_values(field: str, value: object) -> None:

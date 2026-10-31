@@ -1,4 +1,4 @@
-"""Recipe documents (POST/PUT bodies and responses) and list parameters.
+"""Recipe documents (tool inputs and results), patches and list parameters.
 
 Derived values and server fields are output-only.
 """
@@ -7,26 +7,73 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cookbook.common.fields import Limit, Number, Offset, OptionalText, RequiredText
+from cookbook.common.fields import (
+    DecimalNumber,
+    Limit,
+    Number,
+    Offset,
+    OptionalText,
+    RequiredText,
+    decimal_number,
+)
 from cookbook.ingredients.normalize import normalize_name
 
 # Totals are numeric(7, 1) in the database.
-MacroTotal = Annotated[Decimal, Field(ge=0, le=Decimal("999999.9"))]
+MacroTotal = decimal_number(ge=0, le=Decimal("999999.9"))
+Quantity = decimal_number(gt=0)
 Minutes = Annotated[int, Field(ge=0)]
+
+# Field descriptions shown to clients in the tools' input and output schemas.
+_DOC = {
+    "name": "Recipe name.",
+    "description": "Short summary of the dish.",
+    "servings": "How many servings the whole recipe makes.",
+    "prep_time_min": "Hands-on preparation time, in minutes.",
+    "cook_time_min": "Cooking time, in minutes.",
+    "steps": "Method steps in order, one instruction per item.",
+    "ingredients": "Ingredient lines in the order they are listed.",
+    "kcal": "Energy for the whole recipe in kcal, not per serving.",
+    "protein_g": "Protein for the whole recipe in grams, not per serving.",
+    "carbs_g": "Carbohydrates for the whole recipe in grams, not per serving.",
+    "fat_g": "Fat for the whole recipe in grams, not per serving.",
+    "line_name": "Ingredient name. Reuse a name from search_ingredients; stored lowercase.",
+    "quantity": "Amount, in `unit`. Give it together with `unit`, or leave both out "
+    "for an ingredient added to taste.",
+    "unit": "Unit code from list_units, e.g. g, tbsp or clove. Required exactly when "
+    "`quantity` is given.",
+    "prep_note": "How the ingredient is prepared, e.g. drained or finely chopped.",
+    "optional": "True if the dish works without this ingredient, e.g. a garnish. "
+    "Not about whether the field can be left out.",
+    "per_serving": "Whole-recipe total divided by servings, rounded to one decimal.",
+    "total_time_min": "prep_time_min + cook_time_min, a missing one counting as 0; "
+    "null when both are missing.",
+}
+_REPLACES_LIST = " Replaces the whole stored list."
+_NULL_CLEARS = " null clears it."
+
+SORT_KEYS = (
+    "name",
+    "created_at",
+    "total_time",
+    "kcal_per_serving",
+    "protein_per_serving",
+    "carbs_per_serving",
+    "fat_per_serving",
+)
 
 
 class IngredientLineIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str
-    quantity: Annotated[Decimal, Field(gt=0)] | None = None
-    unit: str | None = None
-    prep_note: OptionalText = None
-    optional: bool = False
+    name: str = Field(description=_DOC["line_name"])
+    quantity: Quantity | None = Field(None, description=_DOC["quantity"])
+    unit: str | None = Field(None, description=_DOC["unit"])
+    prep_note: OptionalText = Field(None, description=_DOC["prep_note"])
+    optional: bool = Field(False, description=_DOC["optional"])
 
     @field_validator("name")
     @classmethod
@@ -51,7 +98,7 @@ class IngredientLineIn(BaseModel):
 
 
 class RecipeIn(BaseModel):
-    """A full recipe document, as sent to POST and PUT.
+    """A full recipe document, as sent to ``create_recipe``.
 
     Derived values (per-serving macros, total time) and server fields (id,
     timestamps) are not accepted.
@@ -59,33 +106,75 @@ class RecipeIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: RequiredText
-    description: OptionalText = None
-    servings: Annotated[int, Field(gt=0)]
-    prep_time_min: Minutes | None = None
-    cook_time_min: Minutes | None = None
-    steps: Annotated[list[RequiredText], Field(min_length=1)]
-    ingredients: Annotated[list[IngredientLineIn], Field(min_length=1)]
-    kcal: MacroTotal
-    protein_g: MacroTotal
-    carbs_g: MacroTotal
-    fat_g: MacroTotal
+    name: RequiredText = Field(description=_DOC["name"])
+    description: OptionalText = Field(None, description=_DOC["description"])
+    servings: Annotated[int, Field(gt=0)] = Field(description=_DOC["servings"])
+    prep_time_min: Minutes | None = Field(None, description=_DOC["prep_time_min"])
+    cook_time_min: Minutes | None = Field(None, description=_DOC["cook_time_min"])
+    steps: Annotated[list[RequiredText], Field(min_length=1)] = Field(description=_DOC["steps"])
+    ingredients: Annotated[list[IngredientLineIn], Field(min_length=1)] = Field(
+        description=_DOC["ingredients"]
+    )
+    kcal: MacroTotal = Field(description=_DOC["kcal"])
+    protein_g: MacroTotal = Field(description=_DOC["protein_g"])
+    carbs_g: MacroTotal = Field(description=_DOC["carbs_g"])
+    fat_g: MacroTotal = Field(description=_DOC["fat_g"])
+
+
+def _drop_defaults(schema: dict[str, Any]) -> None:
+    # An absent patch field means "unchanged", not its Python default.
+    for prop in schema.get("properties", {}).values():
+        prop.pop("default", None)
+
+
+class RecipePatch(BaseModel):
+    """Changes to a stored recipe; absent fields stay as they are.
+
+    ``steps`` and ``ingredients`` replace the whole list. ``null`` clears
+    ``description``, ``prep_time_min`` and ``cook_time_min``. The other fields
+    are typed without ``None``, so an explicit ``null`` fails validation on
+    that field, while leaving them out never reaches validation.
+    """
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra=_drop_defaults)
+
+    name: RequiredText = Field(None, description=_DOC["name"])  # type: ignore[assignment]
+    description: OptionalText = Field(None, description=_DOC["description"] + _NULL_CLEARS)
+    servings: Annotated[int, Field(gt=0)] = Field(None, description=_DOC["servings"])  # type: ignore[assignment]
+    prep_time_min: Minutes | None = Field(None, description=_DOC["prep_time_min"] + _NULL_CLEARS)
+    cook_time_min: Minutes | None = Field(None, description=_DOC["cook_time_min"] + _NULL_CLEARS)
+    steps: Annotated[list[RequiredText], Field(min_length=1)] = Field(  # type: ignore[assignment]
+        None, description=_DOC["steps"] + _REPLACES_LIST
+    )
+    ingredients: Annotated[list[IngredientLineIn], Field(min_length=1)] = Field(  # type: ignore[assignment]
+        None, description=_DOC["ingredients"] + _REPLACES_LIST
+    )
+    kcal: MacroTotal = Field(None, description=_DOC["kcal"])
+    protein_g: MacroTotal = Field(None, description=_DOC["protein_g"])
+    carbs_g: MacroTotal = Field(None, description=_DOC["carbs_g"])
+    fat_g: MacroTotal = Field(None, description=_DOC["fat_g"])
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> RecipePatch:
+        if not self.model_fields_set:
+            raise ValueError("patch must change at least one field")
+        return self
 
 
 class IngredientLineOut(BaseModel):
-    ingredient_id: int
-    name: str
-    quantity: Number | None
-    unit: str | None
-    prep_note: str | None
-    optional: bool
+    ingredient_id: int = Field(description="Catalogue id of the ingredient.")
+    name: str = Field(description="Catalogue name of the ingredient.")
+    quantity: Number | None = Field(description=_DOC["quantity"])
+    unit: str | None = Field(description=_DOC["unit"])
+    prep_note: str | None = Field(description=_DOC["prep_note"])
+    optional: bool = Field(description=_DOC["optional"])
 
 
 class PerServing(BaseModel):
-    kcal_per_serving: Number
-    protein_per_serving: Number
-    carbs_per_serving: Number
-    fat_per_serving: Number
+    kcal_per_serving: Number = Field(description=_DOC["per_serving"])
+    protein_per_serving: Number = Field(description=_DOC["per_serving"])
+    carbs_per_serving: Number = Field(description=_DOC["per_serving"])
+    fat_per_serving: Number = Field(description=_DOC["per_serving"])
 
 
 class RecipeSummary(PerServing):
@@ -94,15 +183,15 @@ class RecipeSummary(PerServing):
     servings: int
     prep_time_min: int | None
     cook_time_min: int | None
-    total_time_min: int | None
+    total_time_min: int | None = Field(description=_DOC["total_time_min"])
 
 
 class RecipeOut(RecipeSummary):
     description: str | None
-    kcal: Number
-    protein_g: Number
-    carbs_g: Number
-    fat_g: Number
+    kcal: Number = Field(description=_DOC["kcal"])
+    protein_g: Number = Field(description=_DOC["protein_g"])
+    carbs_g: Number = Field(description=_DOC["carbs_g"])
+    fat_g: Number = Field(description=_DOC["fat_g"])
     steps: list[str]
     ingredients: list[IngredientLineOut]
     created_at: datetime
@@ -111,44 +200,33 @@ class RecipeOut(RecipeSummary):
 
 class RecipeList(BaseModel):
     items: list[RecipeSummary]
-    total: int
+    total: int = Field(description="Recipes matching the filters, ignoring limit and offset.")
     limit: int
     offset: int
 
 
-SORT_KEYS = (
-    "name",
-    "created_at",
-    "total_time",
-    "kcal_per_serving",
-    "protein_per_serving",
-    "carbs_per_serving",
-    "fat_per_serving",
-)
-
-
 class RecipeListParams(BaseModel):
-    """Query parameters for ``GET /recipes``. Bounds are inclusive."""
+    """Arguments of the ``list_recipes`` tool. Bounds are inclusive."""
 
     model_config = ConfigDict(extra="forbid")
 
     q: str | None = None
     max_total_time: Minutes | None = None
-    min_kcal_per_serving: Decimal | None = None
-    max_kcal_per_serving: Decimal | None = None
-    min_protein_per_serving: Decimal | None = None
-    max_protein_per_serving: Decimal | None = None
-    min_carbs_per_serving: Decimal | None = None
-    max_carbs_per_serving: Decimal | None = None
-    min_fat_per_serving: Decimal | None = None
-    max_fat_per_serving: Decimal | None = None
-    ingredient: list[str] = []
+    min_kcal_per_serving: DecimalNumber | None = None
+    max_kcal_per_serving: DecimalNumber | None = None
+    min_protein_per_serving: DecimalNumber | None = None
+    max_protein_per_serving: DecimalNumber | None = None
+    min_carbs_per_serving: DecimalNumber | None = None
+    max_carbs_per_serving: DecimalNumber | None = None
+    min_fat_per_serving: DecimalNumber | None = None
+    max_fat_per_serving: DecimalNumber | None = None
+    ingredients: list[str] = []
     ingredient_match: Literal["all", "any"] = "all"
     sort: str = "name"
     limit: Limit = 50
     offset: Offset = 0
 
-    @field_validator("ingredient")
+    @field_validator("ingredients")
     @classmethod
     def _normalize_ingredients(cls, values: list[str]) -> list[str]:
         normalized = [normalize_name(v) for v in values]

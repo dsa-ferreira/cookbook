@@ -34,10 +34,6 @@ def get_or_create(session: Session, names: Iterable[str]) -> dict[str, int]:
     return {name: id_ for name, id_ in rows}
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def search(session: Session, params: IngredientListParams) -> list[IngredientOut]:
     stmt = select(Ingredient).order_by(Ingredient.name)
     q = normalize_name(params.q or "")
@@ -45,3 +41,7 @@ def search(session: Session, params: IngredientListParams) -> list[IngredientOut
         stmt = stmt.where(Ingredient.name.ilike(f"%{_escape_like(q)}%", escape="\\"))
     stmt = stmt.limit(params.limit).offset(params.offset)
     return [IngredientOut.model_validate(i) for i in session.scalars(stmt)]
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
