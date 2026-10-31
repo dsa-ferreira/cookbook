@@ -16,5 +16,31 @@ services:
       retries: 10
     restart: unless-stopped
 
+  cookbook:
+    build: .
+    image: cookbook:latest
+    environment:
+      COOKBOOK_DATABASE_URL: postgresql://cookbook:cookbook@postgres:5432/cookbook
+      # JSON object of key name -> SHA-256 hash, usually from .env; generate
+      # entries with `make apikey NAME=...`. The service won't start without it.
+      COOKBOOK_API_KEYS: ${COOKBOOK_API_KEYS:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Repeats the image HEALTHCHECK: podman drops it from OCI-format builds.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   pgdata:
