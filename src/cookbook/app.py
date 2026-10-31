@@ -14,6 +14,7 @@ from cookbook.common.web.errors import register_error_handlers
 from cookbook.common.web.health import bp as health_bp
 from cookbook.common.web.session import init_sessions
 from cookbook.ingredients.api import bp as ingredients_bp
+from cookbook.recipes.api import bp as recipes_bp
 from cookbook.units.api import bp as units_bp
 
 SETTINGS_KEY = "cookbook.settings"
@@ -38,6 +39,6 @@ def create_app(
 
     register_error_handlers(app)
     init_auth(app, settings)
-    for bp in (health_bp, units_bp, ingredients_bp):
+    for bp in (health_bp, units_bp, ingredients_bp, recipes_bp):
         app.register_blueprint(bp)
     return app
