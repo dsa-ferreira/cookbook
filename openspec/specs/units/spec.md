@@ -18,15 +18,15 @@ The system SHALL provide a fixed set of units. Each unit has a lowercase code, a
 - **THEN** its dimension is `volume` and its factor to base is 15
 
 ### Requirement: List units
-`GET /units` SHALL return every unit with its code, dimension and factor to base.
+The `list_units` tool SHALL return every unit with its code, dimension and factor to base.
 
 #### Scenario: Units are discoverable
-- **WHEN** a client requests `GET /units`
-- **THEN** the response includes `g`, `ml` and `clove` with their dimensions and factors
+- **WHEN** a client calls `list_units`
+- **THEN** the result includes `g`, `ml` and `clove` with their dimensions and factors
 
 ### Requirement: Unknown units are rejected
-A recipe whose ingredient lines use a unit code that is not in the vocabulary SHALL be rejected with status 422, and the error SHALL name the unknown code. Units SHALL NOT be created implicitly by recipe writes.
+A recipe whose ingredient lines use a unit code that is not in the vocabulary SHALL be rejected with a `validation_error` tool error, and the error SHALL name the unknown code. Units SHALL NOT be created implicitly by recipe writes.
 
 #### Scenario: Unknown unit code
-- **WHEN** a client creates a recipe with an ingredient line using unit `handful`
-- **THEN** the request is rejected with status 422 naming `handful`, and no unit `handful` exists afterwards
+- **WHEN** a client calls `create_recipe` with an ingredient line using unit `handful`
+- **THEN** the call returns a `validation_error` tool error naming `handful`, and no unit `handful` exists afterwards
