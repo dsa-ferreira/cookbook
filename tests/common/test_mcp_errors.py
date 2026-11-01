@@ -1,10 +1,16 @@
 import json
+import logging
 
 import pytest
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from cookbook.common.errors import InvalidInputError, NotFoundError
 from cookbook.common.mcp.errors import tool_errors
+from cookbook.recipes import service as recipes
+from cookbook.recipes.schemas import RecipeIn
+from tests.conftest import Call
+from tests.recipes.factories import line, recipe_doc
 
 pytestmark = pytest.mark.anyio
 
@@ -86,3 +92,92 @@ async def test_signature_is_kept() -> None:
 
     assert list(inspect.signature(tool).parameters) == ["recipe_id", "limit"]
     assert tool.__doc__ == "Docs."
+
+
+# --- through the server: unknown arguments and logging -----------------------------
+
+
+async def test_unknown_argument_is_rejected(call: Call) -> None:
+    is_error, body = await call("list_recipes", min_kcal=100)
+    assert is_error is True
+    assert body == {
+        "error": "validation_error",
+        "message": "unknown argument: min_kcal",
+        "details": [
+            {
+                "type": "extra_forbidden",
+                "loc": ["min_kcal"],
+                "msg": "Extra inputs are not permitted",
+            }
+        ],
+    }
+
+
+async def test_every_unknown_argument_is_named(call: Call) -> None:
+    is_error, body = await call("get_recipe", recipe_id=1, verbose=True, fields=["name"])
+    assert is_error is True
+    assert body["error"] == "validation_error"
+    assert [d["loc"] for d in body["details"]] == [["verbose"], ["fields"]]
+    assert {d["type"] for d in body["details"]} == {"extra_forbidden"}
+
+
+async def test_unknown_argument_stops_the_tool(call: Call, db_session: Session) -> None:
+    rid = recipes.create(db_session, RecipeIn.model_validate(recipe_doc())).id
+    is_error, _ = await call("delete_recipe", recipe_id=rid, force=True)
+    assert is_error is True
+    assert recipes.get(db_session, rid).id == rid
+
+
+@pytest.fixture
+def warnings(caplog: pytest.LogCaptureFixture) -> pytest.LogCaptureFixture:
+    caplog.set_level(logging.WARNING, logger="cookbook.mcp")
+    return caplog
+
+
+def rejection(caplog: pytest.LogCaptureFixture) -> str:
+    (record,) = [r for r in caplog.records if r.name == "cookbook.mcp"]
+    assert record.levelno == logging.WARNING
+    return record.getMessage()
+
+
+async def test_argument_error_is_logged(call: Call, warnings: pytest.LogCaptureFixture) -> None:
+    await call("list_recipes", all_ingredients={"chicken": "all"}, sort="name")
+    message = rejection(warnings)
+    assert message.startswith("tool list_recipes rejected: args=['all_ingredients', 'sort']")
+    assert "'loc': ['all_ingredients']" in message
+    assert "list_type" in message
+
+
+async def test_unknown_argument_is_logged(call: Call, warnings: pytest.LogCaptureFixture) -> None:
+    await call("list_recipes", ingredients=["chicken"])
+    message = rejection(warnings)
+    assert "tool list_recipes rejected: args=['ingredients']" in message
+    assert "extra_forbidden" in message
+
+
+async def test_error_from_the_tool_body_is_logged(
+    call: Call, warnings: pytest.LogCaptureFixture
+) -> None:
+    doc = recipe_doc(ingredients=[line("spinach", 1, "handful")])
+    await call("create_recipe", recipe=doc)
+    message = rejection(warnings)
+    assert "tool create_recipe rejected: args=['recipe']" in message
+    assert "unknown_unit" in message
+
+
+async def test_logged_rejection_has_no_values(
+    call: Call, warnings: pytest.LogCaptureFixture
+) -> None:
+    doc = recipe_doc(name="Grandma's secret stew", servings=0, steps=["Simmer for hours."])
+    await call("create_recipe", recipe=doc)
+    message = rejection(warnings)
+    assert "'loc': ['recipe', 'servings']" in message
+    for value in ("Grandma's secret stew", "Simmer for hours.", "chickpeas", "drained"):
+        assert value not in message
+
+
+async def test_successful_call_is_not_logged(
+    call: Call, warnings: pytest.LogCaptureFixture
+) -> None:
+    await call("list_recipes")
+    assert [r for r in warnings.records if r.name == "cookbook.mcp"] == []

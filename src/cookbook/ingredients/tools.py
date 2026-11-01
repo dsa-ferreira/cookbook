@@ -9,7 +9,7 @@ from cookbook.common.fields import Limit, Offset
 from cookbook.common.mcp.errors import tool_errors
 from cookbook.common.mcp.session import Sessions
 from cookbook.ingredients import service
-from cookbook.ingredients.schemas import IngredientList, IngredientListParams
+from cookbook.ingredients.schemas import IngredientList, IngredientListParams, NameQuery
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
@@ -18,7 +18,7 @@ def register(mcp: MCPServer, sessions: Sessions) -> None:
     @mcp.tool(annotations=READ_ONLY)
     @tool_errors
     async def search_ingredients(
-        q: str | None = None, limit: Limit = 50, offset: Offset = 0
+        q: NameQuery = None, limit: Limit = 50, offset: Offset = 0
     ) -> IngredientList:
         """Search the ingredient catalogue by name, in name order.
 

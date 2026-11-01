@@ -63,16 +63,47 @@ async def test_descriptions_carry_the_domain_rules(tools: dict) -> None:
     assert "null clears" in update
 
 
-@pytest.mark.parametrize("tool", ["create_recipe", "update_recipe"])
-async def test_every_recipe_field_is_described(tools: dict, tool: str) -> None:
-    defs = tools[tool].input_schema["$defs"]
-    undescribed = [
-        f"{model}.{field}"
-        for model, schema in defs.items()
-        for field, prop in schema.get("properties", {}).items()
-        if not prop.get("description")
-    ]
+async def test_unknown_arguments_are_forbidden(tools: dict) -> None:
+    for tool in tools.values():
+        assert tool.input_schema["additionalProperties"] is False, tool.name
+
+
+async def test_every_argument_is_described(tools: dict) -> None:
+    undescribed = []
+    for name, tool in tools.items():
+        schema = tool.input_schema
+        for field, prop in schema.get("properties", {}).items():
+            if not prop.get("description"):
+                undescribed.append(f"{name}: {field}")
+        for model, sub in schema.get("$defs", {}).items():
+            for field, prop in sub.get("properties", {}).items():
+                if not prop.get("description"):
+                    undescribed.append(f"{name}: {model}.{field}")
     assert undescribed == []
+
+
+async def test_sort_is_an_enum(tools: dict) -> None:
+    keys = [
+        "name",
+        "created_at",
+        "total_time",
+        "kcal_per_serving",
+        "protein_per_serving",
+        "carbs_per_serving",
+        "fat_per_serving",
+    ]
+    sort = tools["list_recipes"].input_schema["properties"]["sort"]
+    assert sorted(sort["enum"]) == sorted(keys + [f"-{k}" for k in keys])
+    assert len(sort["enum"]) == 14
+
+
+async def test_list_bounds_state_their_unit(tools: dict) -> None:
+    listing = tools["list_recipes"].input_schema["properties"]
+    assert "grams per serving" in listing["min_protein_per_serving"]["description"]
+    assert "kcal per serving" in listing["max_kcal_per_serving"]["description"]
+    assert "minutes" in listing["max_total_time"]["description"]
+    for field in ("all_ingredients", "any_ingredients"):
+        assert '["chicken", "peanut butter"]' in listing[field]["description"], field
 
 
 async def test_ambiguous_outputs_are_described(tools: dict) -> None:

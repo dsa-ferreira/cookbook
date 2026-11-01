@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from cookbook.common.fields import Limit, Offset, Out
+
+NameQuery = Annotated[
+    str | None,
+    Field(
+        description="Text to find anywhere in the ingredient name, case-insensitively. "
+        "Leave it out to page through the whole catalogue."
+    ),
+]
 
 
 class IngredientOut(Out):
@@ -13,7 +23,7 @@ class IngredientOut(Out):
 class IngredientListParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    q: str | None = None
+    q: NameQuery = None
     limit: Limit = 50
     offset: Offset = 0
 

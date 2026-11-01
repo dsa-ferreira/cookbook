@@ -173,12 +173,20 @@ A failed call is a normal result with `isError: true`, never a protocol
 error. Its structured content (and text) is:
 
 ```json
-{"error": "validation_error", "message": "validation failed", "details": [{"loc": ["recipe", "servings"], "msg": "Input should be greater than 0", "type": "greater_than"}]}
+{"error": "validation_error", "message": "validation failed", "details": [{"type": "greater_than", "loc": ["recipe", "servings"], "msg": "Input should be greater than 0", "ctx": {"gt": 0}}]}
+```
+
+Arguments a tool doesn't declare are rejected too, before the tool runs
+(every input schema has `additionalProperties: false`). Each one gets a
+details entry:
+
+```json
+{"error": "validation_error", "message": "unknown argument: min_kcal", "details": [{"type": "extra_forbidden", "loc": ["min_kcal"], "msg": "Extra inputs are not permitted"}]}
 ```
 
 | `error` | When |
 | --- | --- |
-| `validation_error` | invalid arguments (`loc` names the field), unknown unit code, empty patch |
+| `validation_error` | invalid or unknown arguments (`loc` names the field), unknown unit code, empty patch |
 | `not_found` | unknown recipe id |
 | `internal_error` | anything else; no internals in the result, details in the server log |
 
@@ -294,20 +302,24 @@ the catalogue.
 
 ```json
 // {"q": "hummus", "min_protein_per_serving": 10, "max_total_time": 30,
-//  "ingredients": ["chickpeas", "spinach"], "ingredient_match": "any",
+//  "all_ingredients": ["chickpeas"], "any_ingredients": ["tahini", "peanut_butter"],
 //  "sort": "-protein_per_serving", "limit": 20}
-{"items": [{"kcal_per_serving": 300, "protein_per_serving": 12, "carbs_per_serving": 30, "fat_per_serving": 14, "id": 1, "name": "Smoky hummus", "servings": 4, "prep_time_min": 10, "cook_time_min": 5, "total_time_min": 15}], "total": 1, "limit": 20, "offset": 0}
+{"items": [{"kcal_per_serving": 300, "protein_per_serving": 12, "carbs_per_serving": 30, "fat_per_serving": 14, "id": 1, "name": "Smoky hummus", "servings": 4, "prep_time_min": 10, "cook_time_min": 5, "total_time_min": 15}], "total": 1, "limit": 20, "offset": 0, "unmatched_ingredients": ["peanut_butter"]}
 ```
 
 | Argument | Meaning |
 | --- | --- |
 | `q` | case-insensitive substring of the name |
 | `max_total_time` | total time at most this many minutes (missing times count as zero) |
-| `min_`/`max_` + `kcal_per_serving`, `protein_per_serving`, `carbs_per_serving`, `fat_per_serving` | inclusive per-serving bounds |
-| `ingredients` | list of ingredient names; normalized |
-| `ingredient_match` | `all` (default: every listed ingredient) or `any` |
+| `min_`/`max_` + `kcal_per_serving`, `protein_per_serving`, `carbs_per_serving`, `fat_per_serving` | inclusive per-serving bounds (kcal or grams per serving) |
+| `all_ingredients` | ingredient names the recipe must all contain; normalized |
+| `any_ingredients` | ingredient names of which the recipe must contain at least one; normalized |
 | `sort` | `name` (default), `created_at`, `total_time`, or any `*_per_serving`; prefix `-` for descending |
 | `limit`, `offset` | page size (default 50, 1–200) and offset |
 
-Filters combine with AND. `total` counts all matches, ignoring `limit` and
-`offset`. Invalid values are a `validation_error`.
+Filters combine with AND, including the two ingredient lists. `total`
+counts all matches, ignoring `limit` and `offset`. `unmatched_ingredients`
+lists the requested names (normalized, in request order) that aren't in
+the ingredient catalogue, so they can't match anything: here
+`peanut_butter`. It is empty when every name is known.
+Invalid values are a `validation_error`.

@@ -21,8 +21,12 @@ _JSON_BOUNDS = {
     "le": "maximum",
 }
 
-Limit = Annotated[int, Field(ge=1, le=200)]
-Offset = Annotated[int, Field(ge=0)]
+Limit = Annotated[
+    int, Field(ge=1, le=200, description="Maximum number of items to return, 1 to 200.")
+]
+Offset = Annotated[
+    int, Field(ge=0, description="Number of items to skip; use with limit to page through.")
+]
 
 
 def decimal_number(**bounds: Decimal | int) -> Any:

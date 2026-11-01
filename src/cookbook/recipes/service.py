@@ -57,6 +57,9 @@ def list_recipes(session: Session, params: RecipeListParams) -> RecipeList:
         total=total,
         limit=params.limit,
         offset=params.offset,
+        unmatched_ingredients=_unmatched(
+            session, list(dict.fromkeys(params.all_ingredients + params.any_ingredients))
+        ),
     )
 
 
@@ -242,19 +245,15 @@ def _filtered(params: RecipeListParams) -> Select:
             stmt = stmt.where(column >= low)
         if high is not None:
             stmt = stmt.where(column <= high)
-    if params.ingredients:
-        stmt = stmt.where(_ingredient_filter(params.ingredients, params.ingredient_match))
+    if params.all_ingredients:
+        stmt = stmt.where(_contains_all(params.all_ingredients))
+    if params.any_ingredients:
+        stmt = stmt.where(_contains_any(params.any_ingredients))
     return stmt
 
 
-def _ingredient_filter(names: list[str], match: str) -> ColumnElement[bool]:
+def _contains_all(names: list[str]) -> ColumnElement[bool]:
     """``names`` are already normalized and distinct."""
-    if match == "any":
-        return exists(
-            select(RecipeIngredient.id)
-            .join(Ingredient, Ingredient.id == RecipeIngredient.ingredient_id)
-            .where(RecipeIngredient.recipe_id == Recipe.id, Ingredient.name.in_(names))
-        )
     having_all = (
         select(RecipeIngredient.recipe_id)
         .join(Ingredient, Ingredient.id == RecipeIngredient.ingredient_id)
@@ -263,6 +262,14 @@ def _ingredient_filter(names: list[str], match: str) -> ColumnElement[bool]:
         .having(func.count(func.distinct(RecipeIngredient.ingredient_id)) == len(names))
     )
     return Recipe.id.in_(having_all)
+
+
+def _contains_any(names: list[str]) -> ColumnElement[bool]:
+    return exists(
+        select(RecipeIngredient.id)
+        .join(Ingredient, Ingredient.id == RecipeIngredient.ingredient_id)
+        .where(RecipeIngredient.recipe_id == Recipe.id, Ingredient.name.in_(names))
+    )
 
 
 def _summary(recipe: Recipe) -> RecipeSummary:
@@ -278,6 +285,14 @@ def _summary(recipe: Recipe) -> RecipeSummary:
         carbs_per_serving=recipe.carbs_g_per_serving,
         fat_per_serving=recipe.fat_g_per_serving,
     )
+
+
+def _unmatched(session: Session, names: list[str]) -> list[str]:
+    """The ``names`` not in the ingredient catalogue, in the given order."""
+    if not names:
+        return []
+    known = set(session.scalars(select(Ingredient.name).where(Ingredient.name.in_(names))))
+    return [name for name in names if name not in known]
 
 
 def _escape_like(value: str) -> str:

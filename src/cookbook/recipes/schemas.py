@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -26,6 +26,7 @@ from cookbook.ingredients.normalize import normalize_name
 MacroTotal = decimal_number(ge=0, le=Decimal("999999.9"))
 Quantity = decimal_number(gt=0)
 Minutes = Annotated[int, Field(ge=0)]
+RecipeId = Annotated[int, Field(description="Recipe id, as returned by list_recipes.")]
 
 # Field descriptions shown to clients in the tools' input and output schemas.
 _DOC = {
@@ -55,15 +56,52 @@ _DOC = {
 _REPLACES_LIST = " Replaces the whole stored list."
 _NULL_CLEARS = " null clears it."
 
-SORT_KEYS = (
+SortKey = Literal[
     "name",
+    "-name",
     "created_at",
+    "-created_at",
     "total_time",
+    "-total_time",
     "kcal_per_serving",
+    "-kcal_per_serving",
     "protein_per_serving",
+    "-protein_per_serving",
     "carbs_per_serving",
+    "-carbs_per_serving",
     "fat_per_serving",
+    "-fat_per_serving",
+]
+# The sort keys without direction, in the order above.
+SORT_KEYS = tuple(key for key in get_args(SortKey) if not key.startswith("-"))
+
+_INGREDIENT_NAMES = (
+    'Ingredient names as listed by search_ingredients, e.g. ["chicken", "peanut butter"]; '
+    "case and surrounding spaces are ignored."
 )
+# Descriptions of the list_recipes arguments, shared by the tool signature
+# and RecipeListParams.
+LIST_DOC = {
+    "q": "Text to find anywhere in the recipe name, case-insensitively.",
+    "max_total_time": "Longest total time (prep + cook) in minutes, inclusive. "
+    "A missing prep or cook time counts as 0.",
+    **{
+        f"{bound}_{macro}_per_serving": f"{label} {name}, in {unit}. Inclusive."
+        for macro, name, unit in (
+            ("kcal", "energy", "kcal per serving"),
+            ("protein", "protein", "grams per serving"),
+            ("carbs", "carbohydrates", "grams per serving"),
+            ("fat", "fat", "grams per serving"),
+        )
+        for bound, label in (("min", "Lowest"), ("max", "Highest"))
+    },
+    "all_ingredients": "Recipes must contain every one of these ingredients. " + _INGREDIENT_NAMES,
+    "any_ingredients": "Recipes must contain at least one of these ingredients. "
+    + _INGREDIENT_NAMES
+    + " Combines with all_ingredients by AND.",
+    "sort": "Sort order; a leading - sorts descending. total_time counts a missing "
+    "prep or cook time as 0.",
+}
 
 
 class IngredientLineIn(BaseModel):
@@ -203,6 +241,10 @@ class RecipeList(BaseModel):
     total: int = Field(description="Recipes matching the filters, ignoring limit and offset.")
     limit: int
     offset: int
+    unmatched_ingredients: list[str] = Field(
+        description="Requested ingredient names (normalized) that are not in the catalogue, "
+        "so they match no recipe. Empty when every name is known."
+    )
 
 
 class RecipeListParams(BaseModel):
@@ -210,35 +252,42 @@ class RecipeListParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    q: str | None = None
-    max_total_time: Minutes | None = None
-    min_kcal_per_serving: DecimalNumber | None = None
-    max_kcal_per_serving: DecimalNumber | None = None
-    min_protein_per_serving: DecimalNumber | None = None
-    max_protein_per_serving: DecimalNumber | None = None
-    min_carbs_per_serving: DecimalNumber | None = None
-    max_carbs_per_serving: DecimalNumber | None = None
-    min_fat_per_serving: DecimalNumber | None = None
-    max_fat_per_serving: DecimalNumber | None = None
-    ingredients: list[str] = []
-    ingredient_match: Literal["all", "any"] = "all"
-    sort: str = "name"
+    q: str | None = Field(None, description=LIST_DOC["q"])
+    max_total_time: Minutes | None = Field(None, description=LIST_DOC["max_total_time"])
+    min_kcal_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["min_kcal_per_serving"]
+    )
+    max_kcal_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["max_kcal_per_serving"]
+    )
+    min_protein_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["min_protein_per_serving"]
+    )
+    max_protein_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["max_protein_per_serving"]
+    )
+    min_carbs_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["min_carbs_per_serving"]
+    )
+    max_carbs_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["max_carbs_per_serving"]
+    )
+    min_fat_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["min_fat_per_serving"]
+    )
+    max_fat_per_serving: DecimalNumber | None = Field(
+        None, description=LIST_DOC["max_fat_per_serving"]
+    )
+    all_ingredients: list[str] = Field([], description=LIST_DOC["all_ingredients"])
+    any_ingredients: list[str] = Field([], description=LIST_DOC["any_ingredients"])
+    sort: SortKey = Field("name", description=LIST_DOC["sort"])
     limit: Limit = 50
     offset: Offset = 0
 
-    @field_validator("ingredients")
+    @field_validator("all_ingredients", "any_ingredients")
     @classmethod
     def _normalize_ingredients(cls, values: list[str]) -> list[str]:
         normalized = [normalize_name(v) for v in values]
         if "" in normalized:
             raise ValueError("ingredient names must not be blank")
         return list(dict.fromkeys(normalized))
-
-    @field_validator("sort")
-    @classmethod
-    def _sort_key(cls, value: str) -> str:
-        if value.removeprefix("-") not in SORT_KEYS:
-            raise ValueError(
-                "sort must be one of " + ", ".join(SORT_KEYS) + ", optionally prefixed with '-'"
-            )
-        return value

@@ -34,13 +34,17 @@ async def names(call: Call, **arguments) -> list[str]:
     [
         ({"sort": "tastiness"}, "sort"),
         ({"sort": "--name"}, "sort"),
-        ({"ingredient_match": "some"}, "ingredient_match"),
+        ({"ingredients": ["chickpeas"]}, "ingredients"),
+        ({"ingredient_match": "any"}, "ingredient_match"),
+        ({"all_ingredients": {"chicken": "all"}}, "all_ingredients"),
+        ({"any_ingredients": "chicken"}, "any_ingredients"),
         ({"limit": 0}, "limit"),
         ({"limit": 201}, "limit"),
         ({"offset": -1}, "offset"),
         ({"min_protein_per_serving": "lots"}, "min_protein_per_serving"),
         ({"max_total_time": "soon"}, "max_total_time"),
-        ({"ingredients": ["  "]}, "ingredients"),
+        ({"all_ingredients": ["  "]}, "all_ingredients"),
+        ({"any_ingredients": ["chickpeas", ""]}, "any_ingredients"),
     ],
 )
 async def test_invalid_arguments_are_validation_errors(
@@ -139,34 +143,75 @@ def r1_r2(db_session: Session) -> None:
 
 
 @pytest.mark.usefixtures("r1_r2")
-async def test_all_ingredients_required_by_default(call: Call) -> None:
-    both = ["chickpeas", "spinach"]
-    assert await names(call, ingredients=both) == ["R1"]
-    assert await names(call, ingredients=both, ingredient_match="all") == ["R1"]
+async def test_all_ingredients(call: Call) -> None:
+    assert await names(call, all_ingredients=["chickpeas", "spinach"]) == ["R1"]
 
 
 @pytest.mark.usefixtures("r1_r2")
 async def test_any_ingredient(call: Call) -> None:
-    body = await listed(call, ingredients=["chickpeas", "spinach"], ingredient_match="any")
+    body = await listed(call, any_ingredients=["chickpeas", "spinach"])
     assert [r["name"] for r in body["items"]] == ["R1", "R2"]
     assert body["total"] == 2
 
 
+async def test_all_and_any_combine_with_and(call: Call, db_session: Session) -> None:
+    add(db_session, name="R1", ingredients=[line("chickpeas", 400, "g"), line("lemon", 1, "piece")])
+    add(db_session, name="R2", ingredients=[line("chickpeas", 400, "g"), line("lime", 1, "piece")])
+    add(db_session, name="R3", ingredients=[line("lemon", 1, "piece")])
+    both = {"all_ingredients": ["chickpeas"], "any_ingredients": ["lemon", "lime"]}
+    assert await names(call, **both) == ["R1", "R2"]
+
+
+@pytest.mark.usefixtures("r1_r2")
+async def test_empty_lists_do_not_filter(call: Call) -> None:
+    assert await names(call, all_ingredients=[], any_ingredients=[]) == ["R1", "R2", "R3"]
+
+
 @pytest.mark.usefixtures("r1_r2")
 async def test_ingredient_names_are_normalized(call: Call) -> None:
-    assert await names(call, ingredients=[" Chickpeas"]) == ["R1", "R2"]
+    assert await names(call, all_ingredients=[" Chickpeas"]) == ["R1", "R2"]
     # Duplicates after normalization count once for "all".
-    assert await names(call, ingredients=["Spinach", "spinach "]) == ["R1"]
+    assert await names(call, all_ingredients=["Spinach", "spinach "]) == ["R1"]
 
 
 async def test_ingredient_repeated_on_lines_counts_once(call: Call, db_session: Session):
     add(db_session, name="Double", ingredients=[line("flour", 200, "g"), line("flour", 1, "tbsp")])
-    assert await names(call, ingredients=["flour", "sugar"]) == []
-    assert await names(call, ingredients=["flour"]) == ["Double"]
+    assert await names(call, all_ingredients=["flour", "sugar"]) == []
+    assert await names(call, all_ingredients=["flour"]) == ["Double"]
 
 
-@pytest.mark.usefixtures("r1_r2")
-async def test_unknown_ingredient_matches_nothing(call: Call) -> None:
-    body = await listed(call, ingredients=["unobtainium"])
+# --- unmatched ingredient names ----------------------------------------------------
+
+
+async def test_unknown_ingredient_is_reported(call: Call, db_session: Session) -> None:
+    add(db_session, name="Satay", ingredients=[line("chicken", 300, "g"), line("peanut butter")])
+    body = await listed(call, all_ingredients=["chicken", "peanut_butter"])
     assert body["items"] == []
     assert body["total"] == 0
+    assert body["unmatched_ingredients"] == ["peanut_butter"]
+
+
+async def test_unmatched_names_in_request_order_without_duplicates(
+    call: Call, db_session: Session
+) -> None:
+    add(db_session, name="Rice", ingredients=[line("rice", 200, "g")])
+    body = await listed(
+        call, all_ingredients=["Zest", "rice"], any_ingredients=["yuzu", "zest", "rice"]
+    )
+    assert body["unmatched_ingredients"] == ["zest", "yuzu"]
+
+
+async def test_known_names_report_nothing(call: Call, db_session: Session) -> None:
+    add(db_session, name="Satay", ingredients=[line("chicken", 300, "g"), line("peanut butter")])
+    add(db_session, name="Rice", ingredients=[line("rice", 200, "g")])
+    matched = await listed(call, any_ingredients=["chicken"])
+    assert [r["name"] for r in matched["items"]] == ["Satay"]
+    assert matched["unmatched_ingredients"] == []
+    # Known, but in no recipe that passes the other filters.
+    unmatched = await listed(call, any_ingredients=["chicken"], q="rice")
+    assert unmatched["items"] == []
+    assert unmatched["unmatched_ingredients"] == []
+
+
+async def test_no_ingredient_filter_reports_nothing(call: Call) -> None:
+    assert (await listed(call))["unmatched_ingredients"] == []
